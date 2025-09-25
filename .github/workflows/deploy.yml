@@ -7,8 +7,8 @@ on:
       - main
       - develop
     paths:
-      - '**'  # 任何檔案變動都會觸發，你可以根據需要修改
-      - '!.github/workflows/**' # 除了 ci/cd 流程檔本身
+      - 'dist/**' # 只有當 dist 資料夾內的檔案有變動時，才觸發
+      - '!.github/workflows/**' # 忽略 CI/CD 流程檔本身的變動
 
 # 定義一個名為 'deploy' 的工作
 jobs:
@@ -25,33 +25,41 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 步驟 2: 設定 AWS 憑證 - main 分支
-      - name: Configure AWS credentials for main branch
+      # 步驟 2: 檢查檔案大小
+      - name: Check for large files
+        run: |
+          # 查找所有大於 100MB 的檔案
+          find ./dist/ -type f -size +100M -print -exec false {} +
+          if [ $? -eq 0 ]; then
+            echo "✅ No files larger than 100MB found."
+          else
+            echo "❌ ERROR: Found files larger than 100MB. Deployment aborted."
+            exit 1
+          fi
+
+      # 步驟 3: 設定 AWS 憑證
+      - name: Configure AWS credentials
         if: github.ref == 'refs/heads/main'
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          # main 分支使用正式環境的角色
           role-to-assume: ${{ secrets.AWS_ROLE_PROD }}
           aws-region: ap-east-2
 
-      # 步驟 3: 設定 AWS 憑證 - develop 分支
-      - name: Configure AWS credentials for develop branch
+      - name: Configure AWS credentials
         if: github.ref == 'refs/heads/develop'
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          # develop 分支使用測試環境的角色
           role-to-assume: ${{ secrets.AWS_ROLE_TEST }}
           aws-region: ap-east-2
 
       # 步驟 4: 根據分支名稱，將網站文件同步到不同的 S3 儲存桶
       - name: Deploy to S3
         run: |
-          # 根據當前分支名稱，設定目標 S3 Bucket
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
             S3_BUCKET="s3://virtualtour-prod-website-virtualtour.npac-ntch.org"
           elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
             S3_BUCKET="s3://virtualtour-testing-website-virtualtour-test.npac-ntch.org"
           fi
           
-          # 將 ./ 資料夾下的所有檔案同步到 S3 Bucket
-          aws s3 sync ./ $S3_BUCKET --delete
+          # 將 ./dist 資料夾下的所有檔案同步到 S3 Bucket
+          aws s3 sync ./dist/ $S3_BUCKET --delete
